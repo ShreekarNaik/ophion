@@ -47,11 +47,13 @@ impl OfiExtractor {
 
         let mut ofi = [0.0f64; LEVELS];
         for (i, slot) in ofi.iter_mut().enumerate() {
-            let bid_delta =
-                compute_level_delta(&bids, &self.prev_bid, i, best_bid_now, best_bid_prev, true);
-            let ask_delta =
-                compute_level_delta(&asks, &self.prev_ask, i, best_ask_now, best_ask_prev, false);
-            *slot = bid_delta - ask_delta;
+            // Raw positive delta = how much that side's qty at level i increased.
+            let bid_contribution =
+                level_qty_delta(&bids, &self.prev_bid, i, best_bid_now, best_bid_prev);
+            let ask_contribution =
+                level_qty_delta(&asks, &self.prev_ask, i, best_ask_now, best_ask_prev);
+            // OFI_k = Δbid_qty_k − Δask_qty_k  (Cont, Kukanov & Stoikov 2014)
+            *slot = bid_contribution - ask_contribution;
         }
 
         let qd_bid = self.fill_ewma[0].update(filled_bid as f64);
@@ -76,13 +78,16 @@ impl Default for OfiExtractor {
     }
 }
 
-fn compute_level_delta(
+/// Returns the signed change in qty at `level` for one side.
+/// When the best price moves (Cont/Kukanov/Stoikov price-shift adjustment),
+/// the new level qty is treated as a pure arrival to avoid sign artefacts
+/// from level re-indexing.
+fn level_qty_delta(
     curr: &[(i64, u64)],
     prev: &[(i64, u64)],
     level: usize,
     best_now: Option<i64>,
     best_prev: Option<i64>,
-    is_bid: bool,
 ) -> f64 {
     let curr_qty = curr.get(level).map(|x| x.1).unwrap_or(0);
     let prev_qty = prev.get(level).map(|x| x.1).unwrap_or(0);
@@ -93,18 +98,9 @@ fn compute_level_delta(
     };
 
     if price_moved {
-        // Cont/Kukanov/Stoikov: when best price moves, treat new level as pure arrival
-        if is_bid {
-            curr_qty as f64
-        } else {
-            -(curr_qty as f64)
-        }
+        // Treat the current qty as a fresh arrival (no prior baseline)
+        curr_qty as f64
     } else {
-        let delta = curr_qty as i64 - prev_qty as i64;
-        if is_bid {
-            delta as f64
-        } else {
-            -(delta as f64)
-        }
+        curr_qty as i64 as f64 - prev_qty as i64 as f64
     }
 }
