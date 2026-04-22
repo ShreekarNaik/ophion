@@ -1,0 +1,10 @@
+[package]
+name        = "strategy"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+
+[dependencies]
+lob         = { path = "../lob" }
+signal      = { path = "../signal" }
+thiserror   = { workspace = true }

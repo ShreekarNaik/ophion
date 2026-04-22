@@ -1,0 +1,10 @@
+[package]
+name        = "feed"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+
+[dependencies]
+lob         = { path = "../lob" }
+rand        = { workspace = true }
+thiserror   = { workspace = true }

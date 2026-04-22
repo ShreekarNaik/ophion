@@ -1,0 +1,17 @@
+[package]
+name        = "engine"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+
+[dependencies]
+lob         = { path = "../lob" }
+feed        = { path = "../feed" }
+signal      = { path = "../signal" }
+strategy    = { path = "../strategy" }
+analytics   = { path = "../analytics" }
+sha2        = { workspace = true }
+thiserror   = { workspace = true }
+
+[dev-dependencies]
+sha2        = { workspace = true }

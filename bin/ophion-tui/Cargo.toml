@@ -1,0 +1,19 @@
+[package]
+name        = "ophion-tui"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+
+[[bin]]
+name = "ophion-tui"
+path = "src/main.rs"
+
+[dependencies]
+lob         = { path = "../../crates/lob" }
+feed        = { path = "../../crates/feed" }
+signal      = { path = "../../crates/signal" }
+strategy    = { path = "../../crates/strategy" }
+engine      = { path = "../../crates/engine" }
+analytics   = { path = "../../crates/analytics" }
+ratatui     = { workspace = true }
+crossterm   = { workspace = true }

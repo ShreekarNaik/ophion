@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lob",
+    "crates/feed",
+    "crates/signal",
+    "crates/strategy",
+    "crates/engine",
+    "crates/analytics",
+    "bin/ophion-tui",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+license      = "MIT"
+authors      = ["Shreekar Naik <shreekarsnaik@gmail.com>"]
+rust-version = "1.80"
+
+[workspace.dependencies]
+# LOB / core
+rustc-hash   = "1.1"
+thiserror    = "2"
+proptest     = "1"
+
+# Feed / signal
+rand         = { version = "0.8", features = ["std_rng"] }
+sha2         = "0.10"
+
+# Analytics / IO
+csv          = "1"
+serde        = { version = "1", features = ["derive"] }
+
+# TUI
+ratatui      = "0.28"
+crossterm    = "0.28"
+
+# Benches
+criterion    = { version = "0.5", features = ["html_reports"] }
+
+[profile.release]
+opt-level   = 3
+lto         = "thin"
+codegen-units = 1
