@@ -12,6 +12,8 @@ pub struct Engine<F: Feed, S: Strategy> {
     pub account: AccountState,
     pub event_count: u64,
     pub pnl_trace: Vec<f64>,
+    /// Mid-price in ticks at each event — feed-dependent, used for determinism tests.
+    pub mid_trace: Vec<i64>,
     pub fee_bps: f64,
 }
 
@@ -25,6 +27,7 @@ impl<F: Feed, S: Strategy> Engine<F, S> {
             account: AccountState::default(),
             event_count: 0,
             pnl_trace: Vec::new(),
+            mid_trace: Vec::new(),
             fee_bps,
         }
     }
@@ -98,6 +101,7 @@ impl<F: Feed, S: Strategy> Engine<F, S> {
 
         let mid = self.book.mid().unwrap_or(0);
         self.pnl_trace.push(self.account.total_pnl(mid));
+        self.mid_trace.push(mid);
 
         #[cfg(debug_assertions)]
         debug_assert!(
