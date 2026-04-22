@@ -42,10 +42,68 @@ impl OrderBook {
         if qty.0 == 0 {
             return Err(OrderBookError::ZeroQuantity);
         }
-        let id = OrderId(self.next_id);
-        self.next_id += 1;
         self.last_ts = ts;
 
+        // Continuous matching: sweep opposing side at prices that cross this order.
+        let mut remaining = qty.0;
+        loop {
+            let opposing_price = match side {
+                Side::Bid => self.asks.keys().next().copied().filter(|&ba| ba <= price),
+                Side::Ask => self
+                    .bids
+                    .keys()
+                    .next_back()
+                    .copied()
+                    .filter(|&bb| bb >= price),
+            };
+            let opposing_price = match opposing_price {
+                Some(p) => p,
+                None => break,
+            };
+            if remaining == 0 {
+                break;
+            }
+            let level = match side {
+                Side::Bid => self.asks.get_mut(&opposing_price),
+                Side::Ask => self.bids.get_mut(&opposing_price),
+            };
+            if let Some(level) = level {
+                while remaining > 0 {
+                    let Some((_front_id, front_qty)) = level.queue.front_mut() else {
+                        break;
+                    };
+                    let take = front_qty.0.min(remaining);
+                    front_qty.0 -= take;
+                    level.total_qty -= take;
+                    remaining -= take;
+                    if front_qty.0 == 0 {
+                        if let Some((removed_id, _)) = level.queue.pop_front() {
+                            self.orders.remove(&removed_id.0);
+                        }
+                    }
+                }
+            }
+            // Remove exhausted level
+            match side {
+                Side::Bid => {
+                    self.asks.retain(|_, l| l.total_qty > 0);
+                }
+                Side::Ask => {
+                    self.bids.retain(|_, l| l.total_qty > 0);
+                }
+            }
+        }
+
+        if remaining == 0 {
+            // Fully filled during matching; return a valid id but nothing rests
+            let id = OrderId(self.next_id);
+            self.next_id += 1;
+            return Ok(id);
+        }
+
+        // Rest the unfilled remainder
+        let id = OrderId(self.next_id);
+        self.next_id += 1;
         let book_side = match side {
             Side::Bid => &mut self.bids,
             Side::Ask => &mut self.asks,
@@ -54,8 +112,8 @@ impl OrderBook {
             total_qty: 0,
             queue: VecDeque::new(),
         });
-        level.total_qty += qty.0;
-        level.queue.push_back((id, qty));
+        level.total_qty += remaining;
+        level.queue.push_back((id, Qty(remaining)));
         self.orders.insert(id.0, OrderLocator { side, price });
         Ok(id)
     }

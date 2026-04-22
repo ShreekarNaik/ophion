@@ -1,5 +1,6 @@
 pub mod error;
 pub mod order_book;
+mod tests;
 pub mod types;
 
 pub use error::OrderBookError;
