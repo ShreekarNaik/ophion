@@ -12,10 +12,16 @@ strategy    = { path = "../strategy" }
 analytics   = { path = "../analytics" }
 sha2        = { workspace = true }
 thiserror   = { workspace = true }
+csv         = { workspace = true }
+serde       = { workspace = true }
 
 [[bin]]
 name = "ophion"
 path = "src/bin/ophion.rs"
+
+[[bin]]
+name = "sweep"
+path = "src/bin/sweep.rs"
 
 [dev-dependencies]
 sha2        = { workspace = true }

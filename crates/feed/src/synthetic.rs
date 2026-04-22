@@ -35,6 +35,10 @@ pub struct FeedParams {
     pub max_offset_ticks: u64,
     /// Typical order quantity (Poisson mean for qty)
     pub qty_mean: f64,
+    /// Price impact per unit of order flow (ticks per qty unit).
+    /// Limit/market bid arrivals push the OU mid up; ask arrivals push it down.
+    /// Implements the Cont–Kukanov–Stoikov OFI→price feedback mechanism.
+    pub ofi_impact: f64,
 }
 
 impl Default for FeedParams {
@@ -49,9 +53,12 @@ impl Default for FeedParams {
             ou_theta: 0.01,
             ou_mu: 10000.0, // mid starts at 100.00
             ou_sigma: 0.5,
-            price_offset_decay: 0.4,
-            max_offset_ticks: 20,
+            price_offset_decay: 0.8,
+            max_offset_ticks: 10,
             qty_mean: 5.0,
+            // 0.02 ticks/unit impact; with decay=0.8 orders cluster near best bid/ask,
+            // so OFI imbalance quickly moves the book mid (Cont-Kukanov-Stoikov mechanism).
+            ofi_impact: 0.02,
         }
     }
 }
@@ -154,6 +161,7 @@ impl Feed for SyntheticFeed {
         let dist = self.weight_dist.as_ref()?;
         let event_type = dist.sample(&mut self.rng);
 
+        let impact = self.params.ofi_impact;
         let tick = match event_type {
             // Limit bid: price below mid
             0 => {
@@ -167,6 +175,7 @@ impl Feed for SyntheticFeed {
                 if self.bid_ids.len() > 200 {
                     self.bid_ids.pop_front();
                 }
+                self.mid += impact * qty.get() as f64;
                 Tick::LimitOrder {
                     side: Side::Bid,
                     price,
@@ -185,6 +194,7 @@ impl Feed for SyntheticFeed {
                 if self.ask_ids.len() > 200 {
                     self.ask_ids.pop_front();
                 }
+                self.mid -= impact * qty.get() as f64;
                 Tick::LimitOrder {
                     side: Side::Ask,
                     price,
@@ -225,18 +235,20 @@ impl Feed for SyntheticFeed {
                     }
                 }
             }
-            // Market bid
+            // Market bid — stronger impact (more urgent, moves price more)
             4 => {
                 let qty = self.sample_qty();
+                self.mid += impact * 2.0 * qty.get() as f64;
                 Tick::MarketOrder {
                     side: Side::Bid,
                     qty,
                     ts,
                 }
             }
-            // Market ask
+            // Market ask — stronger impact
             5 => {
                 let qty = self.sample_qty();
+                self.mid -= impact * 2.0 * qty.get() as f64;
                 Tick::MarketOrder {
                     side: Side::Ask,
                     qty,

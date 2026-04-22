@@ -366,8 +366,10 @@ name = "engine"
 version = "0.1.0"
 dependencies = [
  "analytics",
+ "csv",
  "feed",
  "lob",
+ "serde",
  "sha2",
  "signal",
  "strategy",

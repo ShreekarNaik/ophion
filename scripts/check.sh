@@ -16,8 +16,8 @@ echo "==> no-unwrap gate (library code only, outside #[cfg(test)] blocks)"
 # For simplicity: flag any unwrap()/panic! in crates/*/src that isn't on a // SAFETY or test line.
 FAIL=0
 for f in $(find crates -name "*.rs" -path "*/src/*"); do
-    # Skip test files (files ending in _test.rs or under tests/)
-    if [[ "$f" == *_test* ]] || [[ "$f" == */tests/* ]]; then
+    # Skip test files: ending in _test.rs, under tests/, or named tests.rs
+    if [[ "$f" == *_test* ]] || [[ "$f" == */tests/* ]] || [[ "$(basename "$f")" == "tests.rs" ]]; then
         continue
     fi
     # Check for unwrap() or panic! outside of #[cfg(test)] context

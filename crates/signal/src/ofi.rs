@@ -68,6 +68,7 @@ impl OfiExtractor {
             ofi,
             queue_depletion: [qd_bid, qd_ask],
             arrival_rate: [ar_bid, ar_ask],
+            predicted_return: 0.0,
         }
     }
 }

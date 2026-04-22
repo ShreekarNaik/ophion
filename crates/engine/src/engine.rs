@@ -84,7 +84,7 @@ impl<F: Feed, S: Strategy> Engine<F, S> {
             }
         }
 
-        let features = self
+        let mut features = self
             .ofi
             .update(&self.book, filled_bid, filled_ask, market_bid, market_ask);
 
@@ -95,20 +95,14 @@ impl<F: Feed, S: Strategy> Engine<F, S> {
         if self.prev_mid != 0 {
             self.predictor.add_warmup(&features, mid_return);
         }
-        let predicted_return = self.predictor.predict(&features);
+        features.predicted_return = self.predictor.predict(&features);
 
         self.last_features = features.clone();
         self.prev_mid = mid;
 
         let ts = self.book.last_ts;
 
-        // Pass predicted_return into features so strategies can use it.
-        // We store it in features.ofi[0] as a convention during Phase 3
-        // (Phase 4 will provide a proper interface).
-        let mut feats_with_pred = features;
-        feats_with_pred.ofi[0] = predicted_return;
-
-        let actions = self.strategy.on_book(&self.book, &feats_with_pred, ts);
+        let actions = self.strategy.on_book(&self.book, &features, ts);
 
         for action in actions {
             use strategy::Action;

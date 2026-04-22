@@ -22,15 +22,17 @@ impl TakerStrategy {
 
 impl Strategy for TakerStrategy {
     fn on_book(&mut self, book: &OrderBook, features: &Features, _ts: u64) -> Vec<Action> {
-        let spread = match book.spread() {
-            Some(s) => s as f64 * 0.01, // ticks → dollars
+        let spread_ticks = match book.spread() {
+            Some(s) => s as f64,
             None => return vec![],
         };
-        let half_spread = spread / 2.0;
-        let fee = self.fee_bps / 10_000.0;
-        let hurdle = half_spread + fee + self.threshold;
+        let half_spread_ticks = spread_ticks / 2.0;
+        // Fee cost expressed in ticks: at mid price M ticks, fee = M * bps/10000
+        let mid_ticks = book.mid().unwrap_or(0) as f64;
+        let fee_ticks = mid_ticks * self.fee_bps / 10_000.0;
+        let hurdle = half_spread_ticks + fee_ticks + self.threshold;
 
-        let pred = features.ofi[0]; // raw OFI as proxy until predictor wired in Phase 3
+        let pred = features.predicted_return; // ticks; same units as hurdle
         let mut actions = vec![];
 
         if pred > hurdle && self.inventory < self.position_limit {

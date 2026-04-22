@@ -6,4 +6,6 @@ pub struct Features {
     pub queue_depletion: [f64; 2],
     /// EWMA market-order arrival rate per side: [bid, ask]
     pub arrival_rate: [f64; 2],
+    /// Linear predictor output (ticks). Zero until predictor is warmed up.
+    pub predicted_return: f64,
 }
