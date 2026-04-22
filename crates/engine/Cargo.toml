@@ -31,3 +31,8 @@ path = "src/bin/compare.rs"
 [dev-dependencies]
 sha2        = { workspace = true }
 proptest    = { workspace = true }
+criterion   = { workspace = true }
+
+[[bench]]
+name    = "engine_bench"
+harness = false

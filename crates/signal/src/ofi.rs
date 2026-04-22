@@ -102,6 +102,6 @@ fn level_qty_delta(
         // Treat the current qty as a fresh arrival (no prior baseline)
         curr_qty as f64
     } else {
-        curr_qty as i64 as f64 - prev_qty as i64 as f64
+        curr_qty as f64 - prev_qty as f64
     }
 }

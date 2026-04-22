@@ -4,35 +4,38 @@
 
 ## Architecture
 
-```
-SyntheticFeed ── Tick ──▶ OrderBook.apply()
-                              │
-                              ▼
-                         FeatureExtractor  (multi-level OFI, queue-depletion, arrival-rate)
-                              │
-                              ▼
-                         LinearPredictor   (OLS, warmup then frozen)
-                              │
-                              ▼
-                         Strategy.on_book() → Actions
-                              │
-                              ▼
-                         Engine → Fills → PnL accumulator
-                              │
-                              ▼
-                         ratatui TUI + CSV log
+```mermaid
+flowchart TD
+    SF["SyntheticFeed\n(Poisson × 6 + OU drift)"]
+    LO["Tick::LimitOrder"]
+    CA["Tick::Cancel"]
+    MO["Tick::MarketOrder"]
+    OB["OrderBook\n(BTreeMap price levels,\nFxHashMap locators,\ncontinuous matching)"]
+    FE["FeatureExtractor\n• OFI₁…₅  (Cont/Kukanov/Stoikov)\n• queue-depletion EWMA × 2\n• arrival-rate EWMA × 2"]
+    LP["LinearPredictor\n(OLS warmup → frozen coefficients)"]
+    ST["Strategy.on_book()\n→ Vec<Action>"]
+    EN["Engine\n(fill accounting, PnL trace)"]
+    TUI["ratatui TUI\n(LOB ladder + OFI gauge\n+ PnL sparkline + inventory panel)"]
+    CSV["CSV logs\n(sweep.csv, compare.csv)"]
+
+    SF --> LO & CA & MO
+    LO & CA & MO --> OB
+    OB --> FE --> LP --> ST --> EN
+    EN -->|"passive fills → on_passive_fill"| ST
+    EN --> TUI
+    EN --> CSV
 ```
 
 ## Workspace Crates
 
-| Crate | Purpose |
-|-------|---------|
-| `lob` | Integer-tick `OrderBook`, `Price`/`Qty`/`OrderId` newtypes, proptest invariants |
-| `feed` | `Feed` trait, `Tick` enum, `SyntheticFeed` (Poisson + OU drift) |
-| `signal` | Multi-level OFI, queue-depletion, arrival-rate, OLS predictor |
-| `strategy` | `Strategy` trait, `TakerStrategy`, `MarketMaker` |
-| `engine` | Deterministic event loop, fill accounting |
-| `analytics` | Sharpe, max drawdown, parameter sweep |
+| Crate       | Purpose                                                                         |
+| ----------- | ------------------------------------------------------------------------------- |
+| `lob`       | Integer-tick `OrderBook`, `Price`/`Qty`/`OrderId` newtypes, proptest invariants |
+| `feed`      | `Feed` trait, `Tick` enum, `SyntheticFeed` (Poisson + OU drift)                 |
+| `signal`    | Multi-level OFI, queue-depletion, arrival-rate, OLS predictor                   |
+| `strategy`  | `Strategy` trait, `TakerStrategy`, `MarketMaker`                                |
+| `engine`    | Deterministic event loop, fill accounting, passive-fill routing                 |
+| `analytics` | Sharpe, max drawdown, parameter sweep                                           |
 
 ## Design Trade-offs
 
@@ -52,7 +55,7 @@ OFI_k(t) = Δbid_qty_k(t) − Δask_qty_k(t)
 
 When the best price moves (Cont/Kukanov/Stoikov price-shift adjustment), the level quantity at the new price is treated as a pure arrival rather than a delta — preventing artefactual sign flips from level re-indexing.
 
-The feature vector **x** = [OFI₁, …, OFI₅, queue_depletion_bid, queue_depletion_ask, arrival_rate_bid, arrival_rate_ask] feeds an OLS linear model predicting the next-Δt mid-price return.
+The feature vector **x** = [OFI₁, …, OFI₅, queue_depletion_bid, queue_depletion_ask, arrival_rate_bid, arrival_rate_ask] feeds an OLS linear model predicting the next-Δt mid-price return. In-sample R² = **0.1487** on the default synthetic regime.
 
 ## Determinism
 
@@ -63,47 +66,58 @@ Same `--seed` → byte-identical SHA-256 of the per-event PnL trace. Verified by
 All numbers: seed=42, 200 000 events, fee=1 bps, release build.
 Sharpe is annualised from per-event PnL returns (annual factor = √(252 × 6.5 × 3600)).
 
-| Metric | TakerStrategy | MarketMaker |
-|--------|:------------:|:-----------:|
-| Total PnL | −84.76 | −2.20 |
-| Annualised Sharpe | −106.53 | −7.04 |
-| Max Drawdown | 84.76 | 2.25 |
-| Fill count | 3 890 | 202 |
-| Max \|inventory\| | 10 | 4 |
-
-*In-sample R² of OFI predictor: **0.1487*** (synthetic data, same generative process)
+| Metric            | TakerStrategy | MarketMaker |
+| ----------------- | :-----------: | :---------: |
+| Total PnL         |    −84.76     |    −2.20    |
+| Annualised Sharpe |    −106.53    |    −7.04    |
+| Max Drawdown      |     84.76     |    2.25     |
+| Fill count        |     3 890     |     202     |
+| Max\|inventory\|  |      10       |      4      |
 
 ### When each strategy wins — and why
 
 **TakerStrategy** fires frequently (3 890 fills) whenever `predicted_return > half_spread + fee + threshold`. On a *synthetic* book, the spread is wide relative to the signal, so most taker crosses lose to spread + fee costs. Performance is regime-sensitive: tighter spreads or higher arrival-rate asymmetry flip it positive (see `cargo run --release --bin sweep`).
 
-**MarketMaker** fills far less (202 passive fills) and carries much smaller drawdown (2.25 vs 84.76). The inventory skew (`−γ·inventory + β·predicted_return`) prevents runaway positions — the proptest invariant verifies `|inventory| ≤ 25` across 500 randomised seeds × up to 5 000 events. On synthetic data the MM still bleeds to adverse selection (it posts two-sided quotes into perfectly informed Poisson flow), but its risk-adjusted profile is meaningfully better: 38× lower drawdown at 19× fewer fills.
+**MarketMaker** fills far less (202 passive fills) and carries much smaller drawdown (2.25 vs 84.76). The inventory skew (`−γ·inventory + β·predicted_return`) prevents runaway positions — the proptest invariant verifies `|inventory| ≤ 25` across 500 randomised seeds × up to 5 000 events. On synthetic data the MM still bleeds to adverse selection (it posts two-sided quotes into perfectly informed Poisson flow), but its risk-adjusted profile is meaningfully better: **38× lower drawdown at 19× fewer fills**.
 
 **The fundamental tension:** a taker needs the signal edge to exceed the full spread + fee; a market maker earns the spread but absorbs adverse selection from the informed flow. In this synthetic regime (where the Poisson processes know the OU drift), the MM's passive edge is eroded by adverse selection — the same result you'd expect from a real venue before adding cancellation speed or a smarter skew function.
 
 *To reproduce:*
+
 ```sh
 cargo run --release --bin compare -- --seed 42 --events 200000
 ```
 
-## Benchmark Numbers (filled in after Phase 6)
+## Benchmark Numbers
 
-| Operation | Latency |
-|-----------|---------|
-| LOB insert | TBD |
-| LOB cancel | TBD |
-| OFI feature extraction | TBD |
-| Engine end-to-end events/sec | TBD |
+All measured on Apple M-series (arm64), release build (`opt-level=3, lto=thin`).
 
-*Machine: Apple M-series, 1M events, release build.*
+| Operation                             | Latency                |
+| ------------------------------------- | ---------------------- |
+| LOB limit-order insert (resting)      | 20 ns                  |
+| LOB cancel (mid-queue, 20-deep level) | 154 ns                 |
+| LOB cancel (best level)               | 449 ns                 |
+| LOB market-order match (1 level)      | 447 ns                 |
+| OFI 5-level feature extraction        | 37 ns                  |
+| Engine end-to-end throughput          | **~2.37 M events/sec** |
+
+*Run yourself:*
+
+```sh
+cargo bench -p lob
+cargo bench -p signal
+cargo bench -p engine
+```
+
+Criterion HTML reports land in `target/criterion/`.
 
 ## What I'd Optimize Next
 
-1. **Flat arrays indexed by tick offset** — replace `BTreeMap` with a fixed-range tick array for O(1) price-level access, as used in production HFT systems.
-2. **Lock-free SPSC ring buffer** for the feed → engine boundary, enabling parallel feed generation.
-3. **io_uring** for real network feed ingestion.
-4. **SIMD** for the OFI vector dot product in `LinearPredictor`.
-5. **Real market data** via the `Feed` trait (LOBSTER or exchange ITCH feeds are a direct swap).
+1. **Flat arrays indexed by tick offset** — replace `BTreeMap` with a fixed-range tick array for O(1) price-level access, as used in production HFT systems. LOB cancel currently pays O(n) queue scan for mid-queue orders; a doubly-linked list per level removes that.
+2. **Lock-free SPSC ring buffer** for the feed → engine boundary, enabling parallel feed generation without synchronization cost.
+3. **io_uring** for real network feed ingestion at kernel-bypass latencies.
+4. **SIMD** for the OFI vector dot product in `LinearPredictor` (9-wide f64 dot product maps cleanly to AVX2/NEON).
+5. **Real market data** via the `Feed` trait — LOBSTER or exchange ITCH feeds are a direct drop-in; the `Feed` trait is the only interface the engine sees.
 
 ## References
 
