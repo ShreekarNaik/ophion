@@ -235,6 +235,10 @@ impl OrderBook {
         Some((self.best_bid()?.0 + self.best_ask()?.0) / 2)
     }
 
+    pub fn orders_contains(&self, id: OrderId) -> bool {
+        self.orders.contains_key(&id.0)
+    }
+
     pub fn depth(&self, side: Side, levels: usize) -> Vec<(Price, u64)> {
         match side {
             Side::Bid => self

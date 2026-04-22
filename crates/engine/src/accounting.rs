@@ -27,6 +27,26 @@ impl AccountState {
         self.fill_count += 1;
     }
 
+    /// Passive fill: `fill.side` is the *aggressor*'s side; the strategy was the maker.
+    pub fn apply_passive_fill(&mut self, fill: &Fill, fee_bps: f64) {
+        let value = fill.price.ticks() as f64 * 0.01 * fill.qty.get() as f64;
+        let fee = value * fee_bps / 10_000.0;
+        match fill.side {
+            Side::Bid => {
+                // Aggressor bought from us → we sold
+                self.realized_pnl += value - fee;
+                self.inventory -= fill.qty.get() as i64;
+            }
+            Side::Ask => {
+                // Aggressor sold to us → we bought
+                self.realized_pnl -= value + fee;
+                self.inventory += fill.qty.get() as i64;
+            }
+        }
+        self.fees_paid += fee;
+        self.fill_count += 1;
+    }
+
     pub fn unrealized_pnl(&self, mid_price_ticks: i64) -> f64 {
         self.inventory as f64 * mid_price_ticks as f64 * 0.01
     }

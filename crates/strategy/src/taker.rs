@@ -55,4 +55,8 @@ impl Strategy for TakerStrategy {
             Side::Ask => self.inventory -= fill.qty.get() as i64,
         }
     }
+
+    fn inventory(&self) -> i64 {
+        self.inventory
+    }
 }

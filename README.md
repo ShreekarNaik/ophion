@@ -58,16 +58,33 @@ The feature vector **x** = [OFI₁, …, OFI₅, queue_depletion_bid, queue_depl
 
 Same `--seed` → byte-identical SHA-256 of the per-event PnL trace. Verified by integration test. No `HashMap` in hot paths; `FxHashMap` everywhere.
 
-## Results (filled in after Phase 4/5)
+## Strategy Comparison
+
+All numbers: seed=42, 200 000 events, fee=1 bps, release build.
+Sharpe is annualised from per-event PnL returns (annual factor = √(252 × 6.5 × 3600)).
 
 | Metric | TakerStrategy | MarketMaker |
-|--------|--------------|-------------|
-| Total PnL | TBD | TBD |
-| Annualised Sharpe | TBD | TBD |
-| Max Drawdown | TBD | TBD |
-| Fill count | TBD | TBD |
+|--------|:------------:|:-----------:|
+| Total PnL | −84.76 | −2.20 |
+| Annualised Sharpe | −106.53 | −7.04 |
+| Max Drawdown | 84.76 | 2.25 |
+| Fill count | 3 890 | 202 |
+| Max \|inventory\| | 10 | 4 |
 
-*In-sample R² of OFI predictor:* TBD (synthetic data, same generative process)
+*In-sample R² of OFI predictor: **0.1487*** (synthetic data, same generative process)
+
+### When each strategy wins — and why
+
+**TakerStrategy** fires frequently (3 890 fills) whenever `predicted_return > half_spread + fee + threshold`. On a *synthetic* book, the spread is wide relative to the signal, so most taker crosses lose to spread + fee costs. Performance is regime-sensitive: tighter spreads or higher arrival-rate asymmetry flip it positive (see `cargo run --release --bin sweep`).
+
+**MarketMaker** fills far less (202 passive fills) and carries much smaller drawdown (2.25 vs 84.76). The inventory skew (`−γ·inventory + β·predicted_return`) prevents runaway positions — the proptest invariant verifies `|inventory| ≤ 25` across 500 randomised seeds × up to 5 000 events. On synthetic data the MM still bleeds to adverse selection (it posts two-sided quotes into perfectly informed Poisson flow), but its risk-adjusted profile is meaningfully better: 38× lower drawdown at 19× fewer fills.
+
+**The fundamental tension:** a taker needs the signal edge to exceed the full spread + fee; a market maker earns the spread but absorbs adverse selection from the informed flow. In this synthetic regime (where the Poisson processes know the OU drift), the MM's passive edge is eroded by adverse selection — the same result you'd expect from a real venue before adding cancellation speed or a smarter skew function.
+
+*To reproduce:*
+```sh
+cargo run --release --bin compare -- --seed 42 --events 200000
+```
 
 ## Benchmark Numbers (filled in after Phase 6)
 

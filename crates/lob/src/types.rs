@@ -23,6 +23,10 @@ pub struct Fill {
 }
 
 impl Price {
+    pub fn from_ticks(ticks: i64) -> Self {
+        Self(ticks)
+    }
+
     pub fn ticks(self) -> i64 {
         self.0
     }

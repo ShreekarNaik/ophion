@@ -1,6 +1,7 @@
 use crate::accounting::AccountState;
 use feed::{Feed, Tick};
 use lob::OrderBook;
+use rustc_hash::FxHashSet;
 use signal::{Features, LinearPredictor, OfiExtractor};
 use strategy::Strategy;
 
@@ -19,6 +20,8 @@ pub struct Engine<F: Feed, S: Strategy> {
     /// Last features computed; exposed for TUI and tests.
     pub last_features: Features,
     prev_mid: i64,
+    /// Order IDs submitted by the strategy (resting limits).
+    strategy_orders: FxHashSet<u64>,
 }
 
 impl<F: Feed, S: Strategy> Engine<F, S> {
@@ -40,6 +43,7 @@ impl<F: Feed, S: Strategy> Engine<F, S> {
             fee_bps,
             last_features: Features::default(),
             prev_mid: 0,
+            strategy_orders: FxHashSet::default(),
         }
     }
 
@@ -79,6 +83,10 @@ impl<F: Feed, S: Strategy> Engine<F, S> {
                             Side::Bid => filled_bid += fill.qty.0,
                             Side::Ask => filled_ask += fill.qty.0,
                         }
+                        if self.strategy_orders.remove(&fill.order_id.0) {
+                            self.account.apply_passive_fill(fill, self.fee_bps);
+                            self.strategy.on_passive_fill(fill);
+                        }
                     }
                 }
             }
@@ -108,9 +116,16 @@ impl<F: Feed, S: Strategy> Engine<F, S> {
             use strategy::Action;
             match action {
                 Action::Submit { side, price, qty } => {
-                    let _ = self.book.add_limit(side, price, qty, ts);
+                    if let Ok(id) = self.book.add_limit(side, price, qty, ts) {
+                        // Only track IDs that actually rest in the book (not immediately filled)
+                        if self.book.orders_contains(id) {
+                            self.strategy_orders.insert(id.0);
+                        }
+                        self.strategy.on_submitted(id);
+                    }
                 }
                 Action::Cancel(id) => {
+                    self.strategy_orders.remove(&id.0);
                     let _ = self.book.cancel(id, ts);
                 }
                 Action::TakeMarket { side, qty } => {

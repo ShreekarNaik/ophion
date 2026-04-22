@@ -17,11 +17,12 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table},
     Terminal,
 };
-use strategy::TakerStrategy;
+use strategy::{MarketMaker, Strategy};
 
 const TICK_BATCH: u64 = 500; // engine steps per UI frame
 const LOB_LEVELS: usize = 10;
 const PNL_HISTORY: usize = 120; // sparkline width in chars
+const INV_HISTORY: usize = 120;
 
 fn main() -> io::Result<()> {
     enable_raw_mode()?;
@@ -31,13 +32,18 @@ fn main() -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let feed = SyntheticFeed::new(42, FeedParams::default());
-    let strategy = TakerStrategy::new(0.5, 1.0, 10);
+    let strategy = MarketMaker::new(1, 0.05, 0.1, 25, 1.0);
     let mut engine = Engine::with_warmup(feed, strategy, 1.0, 1_000);
 
-    // Circular PnL history for sparkline
     let mut pnl_history: Vec<f64> = Vec::with_capacity(PNL_HISTORY);
+    let mut inv_history: Vec<i64> = Vec::with_capacity(INV_HISTORY);
 
-    let result = run_loop(&mut terminal, &mut engine, &mut pnl_history);
+    let result = run_loop(
+        &mut terminal,
+        &mut engine,
+        &mut pnl_history,
+        &mut inv_history,
+    );
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -51,14 +57,13 @@ fn main() -> io::Result<()> {
 
 fn run_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
-    engine: &mut Engine<SyntheticFeed, TakerStrategy>,
+    engine: &mut Engine<SyntheticFeed, MarketMaker>,
     pnl_history: &mut Vec<f64>,
+    inv_history: &mut Vec<i64>,
 ) -> io::Result<()> {
     loop {
-        // Advance engine
         engine.run(TICK_BATCH);
 
-        // Update PnL history
         let mid = engine.book.mid().unwrap_or(0);
         let pnl = engine.account.total_pnl(mid);
         if pnl_history.len() >= PNL_HISTORY {
@@ -66,9 +71,14 @@ fn run_loop<B: ratatui::backend::Backend>(
         }
         pnl_history.push(pnl);
 
-        terminal.draw(|f| draw(f, engine, pnl_history))?;
+        let inv = engine.strategy.inventory();
+        if inv_history.len() >= INV_HISTORY {
+            inv_history.remove(0);
+        }
+        inv_history.push(inv);
 
-        // Non-blocking key check
+        terminal.draw(|f| draw(f, engine, pnl_history, inv_history))?;
+
         if event::poll(Duration::from_millis(0))? {
             if let Event::Key(key) = event::read()? {
                 if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
@@ -82,12 +92,13 @@ fn run_loop<B: ratatui::backend::Backend>(
 
 fn draw(
     f: &mut ratatui::Frame,
-    engine: &Engine<SyntheticFeed, TakerStrategy>,
+    engine: &Engine<SyntheticFeed, MarketMaker>,
     pnl_history: &[f64],
+    inv_history: &[i64],
 ) {
     let area = f.area();
 
-    // Outer layout: LOB top, panels bottom
+    // Top: LOB (55%); bottom: 4 panels (45%)
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
@@ -95,17 +106,22 @@ fn draw(
 
     let bottom = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .constraints([
+            Constraint::Percentage(30),
+            Constraint::Percentage(35),
+            Constraint::Percentage(35),
+        ])
         .split(outer[1]);
 
     draw_lob(f, engine, outer[0]);
     draw_signal(f, engine, bottom[0]);
     draw_pnl(f, engine, pnl_history, bottom[1]);
+    draw_inventory(f, engine, inv_history, bottom[2]);
 }
 
 fn draw_lob(
     f: &mut ratatui::Frame,
-    engine: &Engine<SyntheticFeed, TakerStrategy>,
+    engine: &Engine<SyntheticFeed, MarketMaker>,
     area: ratatui::layout::Rect,
 ) {
     let asks = engine.book.depth(lob::Side::Ask, LOB_LEVELS);
@@ -123,7 +139,6 @@ fn draw_lob(
     let max_rows = LOB_LEVELS.max(asks.len()).max(bids.len());
     let mut rows: Vec<Row> = Vec::with_capacity(max_rows);
 
-    // Asks displayed top-to-bottom: worst ask first (highest price), best ask last
     let asks_display: Vec<_> = asks.iter().rev().collect();
 
     for i in 0..max_rows {
@@ -134,7 +149,6 @@ fn draw_lob(
             ("".to_string(), "".to_string())
         };
 
-        // Bids: best bid first (highest price)
         let (bid_price_s, bid_qty_s) = if i < bids.len() {
             let (p, q) = &bids[i];
             (format!("{:.2}", p.ticks() as f64 * 0.01), format!("{}", q))
@@ -213,7 +227,7 @@ fn draw_lob(
 
 fn draw_signal(
     f: &mut ratatui::Frame,
-    engine: &Engine<SyntheticFeed, TakerStrategy>,
+    engine: &Engine<SyntheticFeed, MarketMaker>,
     area: ratatui::layout::Rect,
 ) {
     let feat = &engine.last_features;
@@ -264,7 +278,6 @@ fn draw_signal(
             feat.arrival_rate[0], feat.arrival_rate[1]
         )),
         Line::from(""),
-        Line::from(format!("  inventory   : {}", engine.account.inventory)),
         Line::from(format!("  fills        : {}", engine.account.fill_count)),
         Line::from(format!("  fees paid   : ${:.4}", engine.account.fees_paid)),
     ];
@@ -280,7 +293,7 @@ fn draw_signal(
 
 fn draw_pnl(
     f: &mut ratatui::Frame,
-    engine: &Engine<SyntheticFeed, TakerStrategy>,
+    engine: &Engine<SyntheticFeed, MarketMaker>,
     pnl_history: &[f64],
     area: ratatui::layout::Rect,
 ) {
@@ -288,7 +301,6 @@ fn draw_pnl(
     let pnl = engine.account.total_pnl(mid);
     let report = run_report(&engine.pnl_trace, engine.account.fill_count);
 
-    // Normalise PnL history for sparkline (needs u64, offset so min=0)
     let min_pnl = pnl_history.iter().copied().fold(f64::INFINITY, f64::min);
     let max_pnl = pnl_history
         .iter()
@@ -331,6 +343,74 @@ fn draw_pnl(
     let spark = Sparkline::default()
         .data(&spark_data)
         .style(Style::default().fg(pnl_color))
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
+    f.render_widget(spark, inner[1]);
+}
+
+fn draw_inventory(
+    f: &mut ratatui::Frame,
+    engine: &Engine<SyntheticFeed, MarketMaker>,
+    inv_history: &[i64],
+    area: ratatui::layout::Rect,
+) {
+    let inv = engine.strategy.inventory();
+    let bound = 25i64;
+
+    let inv_color = if inv.abs() > bound * 4 / 5 {
+        Color::LightRed
+    } else if inv > 0 {
+        Color::LightGreen
+    } else if inv < 0 {
+        Color::LightRed
+    } else {
+        Color::Yellow
+    };
+
+    // Normalise to u64 for sparkline: offset so min=0
+    let min_inv = inv_history.iter().copied().min().unwrap_or(0) as f64;
+    let max_inv = inv_history.iter().copied().max().unwrap_or(0) as f64;
+    let range = (max_inv - min_inv).max(1.0);
+    let spark_data: Vec<u64> = inv_history
+        .iter()
+        .map(|&v| ((v as f64 - min_inv) / range * 100.0).round() as u64)
+        .collect();
+
+    let lines = vec![
+        Line::from(vec![
+            Span::raw("  inventory : "),
+            Span::styled(
+                format!("{:+}", inv),
+                Style::default().fg(inv_color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(format!("  bound     : ±{}", bound)),
+        Line::from(format!(
+            "  utiliz.   : {:.0}%",
+            inv.abs() as f64 / bound as f64 * 100.0
+        )),
+        Line::from(""),
+    ];
+
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(5), Constraint::Min(3)])
+        .split(area);
+
+    let para = Paragraph::new(lines).block(
+        Block::default()
+            .title(" Inventory ")
+            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
+    f.render_widget(para, inner[0]);
+
+    let spark = Sparkline::default()
+        .data(&spark_data)
+        .style(Style::default().fg(inv_color))
         .block(
             Block::default()
                 .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)

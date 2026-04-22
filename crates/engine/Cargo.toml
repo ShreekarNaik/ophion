@@ -14,6 +14,7 @@ sha2        = { workspace = true }
 thiserror   = { workspace = true }
 csv         = { workspace = true }
 serde       = { workspace = true }
+rustc-hash  = { workspace = true }
 
 [[bin]]
 name = "ophion"
@@ -23,5 +24,10 @@ path = "src/bin/ophion.rs"
 name = "sweep"
 path = "src/bin/sweep.rs"
 
+[[bin]]
+name = "compare"
+path = "src/bin/compare.rs"
+
 [dev-dependencies]
 sha2        = { workspace = true }
+proptest    = { workspace = true }

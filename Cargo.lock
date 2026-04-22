@@ -369,6 +369,8 @@ dependencies = [
  "csv",
  "feed",
  "lob",
+ "proptest",
+ "rustc-hash",
  "serde",
  "sha2",
  "signal",
